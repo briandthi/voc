@@ -1,0 +1,13 @@
+[package]
+name = "audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true, features = ["sync", "time"] }
+opus = "0.3"
+cpal = "0.17"
+anyhow = { workspace = true }
+thiserror = "2.0"
+async-trait = "0.1"
+serde = { workspace = true, features = ["derive"] }
