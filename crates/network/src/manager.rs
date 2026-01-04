@@ -170,17 +170,8 @@ impl UdpNetworkManager {
     
     /// Effectue le handshake initial avec un peer
     async fn perform_handshake(&mut self, peer_addr: SocketAddr) -> NetworkResult<()> {
-        // Crée un paquet handshake
-        let empty_frame = CompressedFrame::new(vec![], 0, Instant::now(), 0);
-        let handshake = NetworkPacket {
-            protocol_version: NetworkPacket::CURRENT_PROTOCOL_VERSION,
-            packet_type: PacketType::Handshake,
-            sender_id: self.sender_id,
-            session_id: self.session_id,
-            compressed_frame: empty_frame,
-            send_timestamp: Instant::now(),
-            checksum: 0,
-        };
+        // Crée un paquet handshake en utilisant les méthodes helper
+        let handshake = self.create_handshake_packet();
         
         // Envoie le handshake
         self.transport.send_packet(&handshake, peer_addr).await?;
@@ -238,17 +229,7 @@ impl UdpNetworkManager {
             
             PacketType::Handshake => {
                 // Répond au handshake
-                let empty_frame = CompressedFrame::new(vec![], 0, Instant::now(), 0);
-                let response = NetworkPacket {
-                    protocol_version: NetworkPacket::CURRENT_PROTOCOL_VERSION,
-                    packet_type: PacketType::Handshake,
-                    sender_id: self.sender_id,
-                    session_id: self.session_id,
-                    compressed_frame: empty_frame,
-                    send_timestamp: Instant::now(),
-                    checksum: 0,
-                };
-                
+                let response = self.create_handshake_packet();
                 self.transport.send_packet(&response, source).await?;
             }
             
@@ -279,6 +260,42 @@ impl UdpNetworkManager {
             false
         }
     }
+    
+    /// Crée un paquet handshake avec checksum correct
+    fn create_handshake_packet(&self) -> NetworkPacket {
+        let empty_frame = CompressedFrame::new(vec![], 0, Instant::now(), 0);
+        let mut packet = NetworkPacket {
+            protocol_version: NetworkPacket::CURRENT_PROTOCOL_VERSION,
+            packet_type: PacketType::Handshake,
+            sender_id: self.sender_id,
+            session_id: self.session_id,
+            compressed_frame: empty_frame,
+            send_timestamp: Instant::now(),
+            checksum: 0,
+        };
+        
+        // CORRECTION: Calcule le checksum du paquet réel (avec le bon packet_type)
+        packet.checksum = packet.calculate_checksum();
+        packet
+    }
+    
+    /// Crée un paquet disconnect avec checksum correct  
+    fn create_disconnect_packet(&self) -> NetworkPacket {
+        let empty_frame = CompressedFrame::new(vec![], 0, Instant::now(), 0);
+        let mut packet = NetworkPacket {
+            protocol_version: NetworkPacket::CURRENT_PROTOCOL_VERSION,
+            packet_type: PacketType::Disconnect,
+            sender_id: self.sender_id,
+            session_id: self.session_id,
+            compressed_frame: empty_frame,
+            send_timestamp: Instant::now(),
+            checksum: 0,
+        };
+        
+        // CORRECTION: Calcule le checksum du paquet réel (avec le bon packet_type)
+        packet.checksum = packet.calculate_checksum();
+        packet
+    }
 }
 
 #[async_trait]
@@ -293,42 +310,84 @@ impl NetworkManager for UdpNetworkManager {
         
         println!("En écoute sur le port {} - En attente de connexions...", port);
         
-        // Attend la première connexion
+        // Boucle principale d'écoute - continue indéfiniment
         loop {
-            match self.transport.receive_packet().await {
-                Ok((packet, source_addr)) => {
-                    if packet.packet_type == PacketType::Handshake {
-                        // Tentative de connexion détectée
-                        self.set_connection_state(ConnectionState::Connecting {
-                            target_addr: source_addr,
-                            started_at: Instant::now(),
-                            attempt_count: 1,
-                        }).await;
-                        
-                        // Traite le handshake
-                        self.handle_received_packet(packet, source_addr).await?;
-                        
-                        // Connexion établie
-                        self.set_connection_state(ConnectionState::Connected {
-                            peer_addr: source_addr,
-                            session_id: self.session_id,
-                            connected_at: Instant::now(),
-                            last_heartbeat: Instant::now(),
-                        }).await;
-                        
-                        // Démarre le heartbeat
-                        self.start_heartbeat(source_addr).await?;
-                        
-                        println!("Connexion établie avec {}", source_addr);
-                        break;
+            // Attend une nouvelle connexion
+            loop {
+                match self.transport.receive_packet().await {
+                    Ok((packet, source_addr)) => {
+                        if packet.packet_type == PacketType::Handshake {
+                            // Tentative de connexion détectée
+                            self.set_connection_state(ConnectionState::Connecting {
+                                target_addr: source_addr,
+                                started_at: Instant::now(),
+                                attempt_count: 1,
+                            }).await;
+                            
+                            // Traite le handshake
+                            self.handle_received_packet(packet, source_addr).await?;
+                            
+                            // Connexion établie
+                            self.set_connection_state(ConnectionState::Connected {
+                                peer_addr: source_addr,
+                                session_id: self.session_id,
+                                connected_at: Instant::now(),
+                                last_heartbeat: Instant::now(),
+                            }).await;
+                            
+                            // Démarre le heartbeat
+                            self.start_heartbeat(source_addr).await?;
+                            
+                            println!("Connexion établie avec {}", source_addr);
+                            break; // Sort de la boucle d'attente de connexion
+                        }
                     }
+                    Err(NetworkError::Timeout) => continue, // Continue à attendre
+                    Err(e) => return Err(e),
                 }
-                Err(NetworkError::Timeout) => continue, // Continue à attendre
-                Err(e) => return Err(e),
             }
+            
+            // Maintenant connecté - écoute les paquets jusqu'à déconnexion
+            loop {
+                match self.transport.receive_packet().await {
+                    Ok((packet, source_addr)) => {
+                        // Vérifie que c'est du bon peer
+                        let current_peer = {
+                            let state = self.connection_state.lock().await;
+                            state.peer_addr()
+                        };
+                        
+                        if Some(source_addr) == current_peer {
+                            // Vérifie le type avant de traiter le paquet
+                            let is_disconnect = packet.packet_type == PacketType::Disconnect;
+                            
+                            self.handle_received_packet(packet, source_addr).await?;
+                            
+                            // Si c'est un disconnect, sort de la boucle de connexion
+                            if is_disconnect {
+                                println!("Client {} déconnecté", source_addr);
+                                break; // Sort de la boucle de connexion active
+                            }
+                        }
+                    }
+                    Err(NetworkError::Timeout) => {
+                        // Vérifie si la connexion a timeout
+                        if self.check_heartbeat_timeout().await {
+                            println!("Timeout de connexion - retour en écoute");
+                            self.set_connection_state(ConnectionState::Disconnected).await;
+                            break; // Sort de la boucle de connexion active
+                        }
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            
+            // Connexion terminée - remet l'état à disconnected et continue à écouter
+            self.set_connection_state(ConnectionState::Disconnected).await;
+            self.stop_heartbeat().await;
+            println!("Prêt pour une nouvelle connexion...");
         }
-        
-        Ok(())
     }
     
     /// Se connecte à un peer distant
@@ -463,18 +522,7 @@ impl NetworkManager for UdpNetworkManager {
         
         if let Some(addr) = peer_addr {
             // Envoie un paquet de déconnexion
-            let empty_frame = CompressedFrame::new(vec![], 0, Instant::now(), 0);
-            let disconnect_packet = NetworkPacket {
-                protocol_version: NetworkPacket::CURRENT_PROTOCOL_VERSION,
-                packet_type: PacketType::Disconnect,
-                sender_id: self.sender_id,
-                session_id: self.session_id,
-                compressed_frame: empty_frame,
-                send_timestamp: Instant::now(),
-                checksum: 0,
-            };
-            
-            // Envoie le paquet de déconnexion
+            let disconnect_packet = self.create_disconnect_packet();
             let _ = self.transport.send_packet(&disconnect_packet, addr).await;
         }
         

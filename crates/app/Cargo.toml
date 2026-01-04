@@ -1,16 +1,25 @@
 [package]
 name = "app"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[[bin]]
+name = "test-audio"
+path = "src/main.rs"
+
+[[bin]]
+name = "test-network"
+path = "src/test_network.rs"
+
+[[bin]]
+name = "voc-client"
+path = "src/voc_client.rs"
 
 [dependencies]
-# Dépendances vers les autres crates du workspace
-core = { path = "../core" }
 audio = { path = "../audio" }
 network = { path = "../network" }
-
-# Dépendances externes
-tokio = { workspace = true, features = ["full"] }
-anyhow = { workspace = true }
+core = { path = "../core" }
+tokio = { workspace = true }
 rand = "0.8"
-num_cpus = "1.16"
+num_cpus = "1.0"
+clap = { version = "4.0", features = ["derive"] }

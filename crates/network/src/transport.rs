@@ -95,10 +95,14 @@ impl UdpTransport {
     /// Sérialise un paquet en bytes pour transmission
     /// 
     /// Utilise bincode pour une sérialisation efficace et compacte.
-    /// Met à jour le send_timestamp avant sérialisation.
+    /// Met à jour le send_timestamp avant sérialisation et recalcule le checksum.
     fn serialize_packet(&mut self, packet: &mut NetworkPacket) -> NetworkResult<&[u8]> {
         // Met à jour le timestamp d'envoi
         packet.send_timestamp = Instant::now();
+        
+        // Recalcule le checksum du paquet réel (après modification du timestamp)
+        // CORRECTION: Il faut calculer le checksum du paquet actuel, pas d'un paquet temporaire
+        packet.checksum = packet.calculate_checksum();
         
         // Sérialise dans le buffer pré-alloué
         self.send_buffer.clear();
@@ -148,7 +152,7 @@ impl UdpTransport {
     }
     
     /// Met à jour les statistiques après envoi d'un paquet
-    async fn update_send_stats(&self, packet: &NetworkPacket, target_addr: SocketAddr) {
+    async fn update_send_stats(&self, packet: &NetworkPacket, _target_addr: SocketAddr) {
         let mut stats = self.stats.lock().await;
         stats.packets_sent += 1;
         stats.last_updated = Instant::now();
@@ -162,7 +166,7 @@ impl UdpTransport {
     }
     
     /// Met à jour les statistiques après réception d'un paquet
-    async fn update_receive_stats(&self, packet: &NetworkPacket, source_addr: SocketAddr) {
+    async fn update_receive_stats(&self, packet: &NetworkPacket, _source_addr: SocketAddr) {
         let mut stats = self.stats.lock().await;
         stats.packets_received += 1;
         stats.last_updated = Instant::now();
@@ -399,7 +403,7 @@ impl SimulatedTransport {
         }
         
         // Simulation de latence
-        let actual_latency = if self.jitter_ms > 0 {
+        let _actual_latency = if self.jitter_ms > 0 {
             self.latency_ms + fastrand::u32(0..self.jitter_ms)
         } else {
             self.latency_ms
@@ -453,12 +457,19 @@ impl NetworkTransport for SimulatedTransport {
             tokio::time::sleep(Duration::from_millis(self.latency_ms as u64)).await;
         }
         
-        match self.receive_queue.pop_front() {
-            Some((packet, addr)) => {
-                self.stats.packets_received += 1;
-                Ok((packet, addr))
+        // Utilisation du timeout de configuration
+        match timeout(self.config.connection_timeout, async {
+            loop {
+                if let Some((packet, addr)) = self.receive_queue.pop_front() {
+                    self.stats.packets_received += 1;
+                    return Ok((packet, addr));
+                }
+                // Simulation d'attente active
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            None => Err(NetworkError::Timeout),
+        }).await {
+            Ok(result) => result,
+            Err(_) => Err(NetworkError::Timeout),
         }
     }
     

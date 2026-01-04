@@ -108,7 +108,7 @@ impl NetworkPacket {
     /// Calcule un checksum simple pour détecter les erreurs
     /// 
     /// Utilise un XOR des bytes du paquet (simple mais efficace pour UDP)
-    fn calculate_checksum(&self) -> u32 {
+    pub fn calculate_checksum(&self) -> u32 {
         let mut checksum = 0u32;
         checksum ^= self.protocol_version as u32;
         checksum ^= self.packet_type as u32;
