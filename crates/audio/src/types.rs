@@ -148,7 +148,8 @@ impl AudioFrame {
 /// Après compression, l'audio prend beaucoup moins de place :
 /// - Frame brute : ~3840 bytes (20ms à 48kHz mono)  
 /// - Frame compressée : ~80-200 bytes (ratio ~20:1)
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct CompressedFrame {
     /// Données compressées par Opus
     /// 
@@ -161,10 +162,22 @@ pub struct CompressedFrame {
     pub original_sample_count: usize,
     
     /// Timestamp de création (avant compression)
+    #[serde(skip)]
     pub timestamp: Instant,
     
     /// Numéro de séquence de la frame originale
     pub sequence_number: u64,
+}
+
+impl Default for CompressedFrame {
+    fn default() -> Self {
+        Self {
+            data: Vec::new(),
+            original_sample_count: 0,
+            timestamp: Instant::now(),
+            sequence_number: 0,
+        }
+    }
 }
 
 impl CompressedFrame {

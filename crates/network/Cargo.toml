@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio = { workspace = true }
-serde = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }
+thiserror = "2.0"
+bincode = "1.3"
+audio = { path = "../audio" }
+async-trait = "0.1"
+fastrand = "2.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
